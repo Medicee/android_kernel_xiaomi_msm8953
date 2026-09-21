@@ -85,6 +85,10 @@ jobs:
          make $MAKE_ARGS "$(basename "$DEFCONFIG")"
 
          echo "Resolving config dependencies......."
+
+         echo "Disabling unsupported stack protection feature......."
+         ./scripts/config -d CONFIG_CC_STACKPROTECTOR_STRONG
+         
          make $MAKE_ARGS olddefconfig
 
     - name: Build Kernel
