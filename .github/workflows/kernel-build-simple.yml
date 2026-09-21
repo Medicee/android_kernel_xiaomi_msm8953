@@ -1,0 +1,77 @@
+name: Quick Build
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: 'Build toolchain'
+        required: false
+        default: 'gcc'
+        type: choice
+        options:
+          - gcc
+          - clang
+
+env:
+  ARCH: arm64
+  DEVICE: tissot
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libncurses-dev libssl-dev \
+          bison flex bc libelf-dev lz4 curl git wget rsync \
+          device-tree-compiler gcc-aarch64-linux-gnu \
+          binutils-aarch64-linux-gnu ccache
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ runner.os }}-ccache
+
+    - name: Create output directory
+      run: mkdir -p out
+
+    - name: Prepare config
+      run: |
+        if [ -f "arch/arm64/configs/tissot_defconfig" ]; then
+          cp arch/arm64/configs/tissot_defconfig out/.config
+        else
+          cp tissot_defconfig out/.config 2>/dev/null || exit 1
+        fi
+        make O=out ARCH=arm64 olddefconfig
+
+    - name: Build kernel
+      run: |
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        make -j$(nproc) O=out ARCH=arm64 2>&1 | tail -20
+
+    - name: Check kernel image
+      run: |
+        if [ -f "out/arch/arm64/boot/Image" ]; then
+          ls -lh out/arch/arm64/boot/Image
+          file out/arch/arm64/boot/Image
+        else
+          echo "Kernel image not found!"
+          ls -la out/arch/arm64/boot/ 2>/dev/null || echo "Boot dir not found"
+          exit 1
+        fi
+
+    - name: Upload kernel
+      uses: actions/upload-artifact@v3
+      with:
+        name: kernel-${{ github.run_number }}
+        path: |
+          out/arch/arm64/boot/Image*
+          out/.config
+          out/vmlinux
+        retention-days: 7
