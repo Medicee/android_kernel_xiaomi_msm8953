@@ -1,0 +1,239 @@
+.PHONY: help build clean config modules menuconfig all release
+
+# Kernel Build Makefile for Xiaomi Mi A1 (tissot)
+# Usage: make -f Makefile.kernel [target]
+
+ARCH := arm64
+SUBARCH := arm64
+DEVICE := tissot
+OUT_DIR := out
+DEFCONFIG := tissot_defconfig
+JOBS := $(shell nproc)
+CROSS_COMPILE := aarch64-linux-gnu-
+
+export ARCH SUBARCH OUT_DIR CROSS_COMPILE
+
+help:
+	@echo "================================"
+	@echo "Kernel Build Targets"
+	@echo "================================"
+	@echo "make -f Makefile.kernel help        - Show this help"
+	@echo "make -f Makefile.kernel build       - Build kernel"
+	@echo "make -f Makefile.kernel modules     - Build modules"
+	@echo "make -f Makefile.kernel menuconfig  - Interactive config"
+	@echo "make -f Makefile.kernel oldconfig   - Update config"
+	@echo "make -f Makefile.kernel clean       - Clean build dir"
+	@echo "make -f Makefile.kernel mrproper    - Full clean"
+	@echo "make -f Makefile.kernel all         - Build everything"
+	@echo "make -f Makefile.kernel show-config - Show build config"
+	@echo "make -f Makefile.kernel status      - Show build status"
+	@echo ""
+	@echo "Advanced targets:"
+	@echo "make -f Makefile.kernel defconfig   - Reset to defconfig"
+	@echo "make -f Makefile.kernel saveconfig  - Save .config"
+	@echo "make -f Makefile.kernel diffconfig  - Show config changes"
+	@echo "make -f Makefile.kernel install     - Install modules"
+	@echo ""
+
+# Create output directory and setup config
+$(OUT_DIR):
+	@mkdir -p $(OUT_DIR)
+
+config: $(OUT_DIR)
+	@echo "Setting up kernel configuration..."
+	@if [ -f "arch/$(ARCH)/configs/$(DEFCONFIG)" ]; then \
+		cp arch/$(ARCH)/configs/$(DEFCONFIG) $(OUT_DIR)/.config; \
+		echo "Using arch/$(ARCH)/configs/$(DEFCONFIG)"; \
+	elif [ -f "$(DEFCONFIG)" ]; then \
+		cp $(DEFCONFIG) $(OUT_DIR)/.config; \
+		echo "Using $(DEFCONFIG)"; \
+	else \
+		echo "ERROR: defconfig not found!"; \
+		exit 1; \
+	fi
+	@make O=$(OUT_DIR) ARCH=$(ARCH) olddefconfig
+
+menuconfig: config
+	@echo "Opening kernel config menu..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) menuconfig
+
+oldconfig: config
+	@echo "Updating kernel configuration..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) oldconfig
+
+defconfig: $(OUT_DIR)
+	@echo "Resetting to defconfig..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) defconfig
+
+show-config: $(OUT_DIR)
+	@echo "Kernel Build Configuration:"
+	@echo "  Architecture: $(ARCH)"
+	@echo "  Device: $(DEVICE)"
+	@echo "  Output: $(OUT_DIR)"
+	@echo "  Defconfig: $(DEFCONFIG)"
+	@echo "  Jobs: $(JOBS)"
+	@echo "  Cross-compile: $(CROSS_COMPILE)"
+	@echo ""
+	@if [ -f "$(OUT_DIR)/.config" ]; then \
+		echo "Config options (sample):"; \
+		grep -E "^CONFIG_" $(OUT_DIR)/.config | head -10; \
+		echo "  ... ($(shell grep -c '^CONFIG_' $(OUT_DIR)/.config) total options)"; \
+	else \
+		echo "No .config found. Run 'make -f Makefile.kernel config' first."; \
+	fi
+
+# Main build targets
+build: config
+	@echo "Building kernel ($(JOBS) jobs)..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) -j$(JOBS)
+	@echo ""
+	@echo "Build complete! Output:"
+	@ls -lh $(OUT_DIR)/arch/$(ARCH)/boot/Image* 2>/dev/null || echo "  Image: Not found"
+	@ls -lh $(OUT_DIR)/vmlinux 2>/dev/null || echo "  vmlinux: Not found"
+
+modules: config
+	@echo "Building kernel modules..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) -j$(JOBS) modules
+	@echo "Module build complete"
+
+install-modules: modules
+	@echo "Installing modules..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) INSTALL_MOD_PATH=$(OUT_DIR)/modules modules_install
+	@echo "Modules installed to $(OUT_DIR)/modules"
+
+# All-in-one target
+all: build modules install-modules
+	@echo ""
+	@echo "================================"
+	@echo "Build complete!"
+	@echo "================================"
+	@ls -lh $(OUT_DIR)/arch/$(ARCH)/boot/Image* 2>/dev/null
+	@[ -f "$(OUT_DIR)/vmlinux" ] && echo "vmlinux: $(OUT_DIR)/vmlinux"
+	@[ -d "$(OUT_DIR)/modules" ] && echo "Modules: $(OUT_DIR)/modules"
+
+# Cleaning
+clean:
+	@echo "Cleaning build directory..."
+	@make O=$(OUT_DIR) ARCH=$(ARCH) clean
+	@echo "Clean complete"
+
+mrproper:
+	@echo "Full clean (removing .config)..."
+	@rm -rf $(OUT_DIR)
+	@echo "Full clean complete"
+
+distclean: mrproper
+	@echo "Removing all generated files..."
+	@find . -name "*.o" -o -name "*.a" -o -name "*.so" | xargs rm -f
+	@echo "Distclean complete"
+
+# Configuration management
+saveconfig: $(OUT_DIR)
+	@if [ -f "$(OUT_DIR)/.config" ]; then \
+		cp $(OUT_DIR)/.config arch/$(ARCH)/configs/$(DEFCONFIG); \
+		echo "Saved config to arch/$(ARCH)/configs/$(DEFCONFIG)"; \
+	else \
+		echo "ERROR: No .config to save"; \
+		exit 1; \
+	fi
+
+diffconfig: $(OUT_DIR)
+	@if [ -f "arch/$(ARCH)/configs/$(DEFCONFIG).bak" ]; then \
+		diff -u arch/$(ARCH)/configs/$(DEFCONFIG).bak $(OUT_DIR)/.config || true; \
+	else \
+		echo "No previous config to compare"; \
+	fi
+
+# Build status
+status: $(OUT_DIR)
+	@echo "Build Status for $(DEVICE)"
+	@echo "================================"
+	@if [ -f "$(OUT_DIR)/arch/$(ARCH)/boot/Image" ]; then \
+		echo "✓ Kernel Image:"; \
+		ls -lh $(OUT_DIR)/arch/$(ARCH)/boot/Image; \
+		file $(OUT_DIR)/arch/$(ARCH)/boot/Image; \
+	else \
+		echo "✗ Kernel Image: Not found"; \
+	fi
+	@echo ""
+	@if [ -f "$(OUT_DIR)/vmlinux" ]; then \
+		echo "✓ Debug symbols (vmlinux):"; \
+		ls -lh $(OUT_DIR)/vmlinux; \
+	else \
+		echo "✗ Debug symbols: Not found"; \
+	fi
+	@echo ""
+	@if [ -d "$(OUT_DIR)/modules" ] && [ -n "$$(ls -A $(OUT_DIR)/modules)" ]; then \
+		echo "✓ Modules:"; \
+		find $(OUT_DIR)/modules -name "*.ko" | wc -l; \
+		echo " .ko files built"; \
+	else \
+		echo "✗ Modules: Not found or not built"; \
+	fi
+	@echo ""
+	@if [ -f "$(OUT_DIR)/.config" ]; then \
+		echo "✓ Config:"; \
+		echo " $(shell grep -c '^CONFIG_' $(OUT_DIR)/.config) options enabled"; \
+	else \
+		echo "✗ Config: Not found"; \
+	fi
+
+# Utility targets
+kernel-size: build
+	@echo "Kernel size analysis:"
+	@du -sh $(OUT_DIR)/arch/$(ARCH)/boot/Image*
+	@du -sh $(OUT_DIR)/vmlinux
+	@du -sh $(OUT_DIR)/
+
+# Version info
+version:
+	@echo "Kernel version:"
+	@grep "VERSION\|PATCHLEVEL\|SUBLEVEL" Makefile | head -3 | tr '\n' '.'
+	@echo ""
+
+# Check dependencies
+check-deps:
+	@echo "Checking build dependencies..."
+	@command -v gcc >/dev/null && echo "✓ gcc" || echo "✗ gcc (MISSING)"
+	@command -v make >/dev/null && echo "✓ make" || echo "✗ make (MISSING)"
+	@command -v flex >/dev/null && echo "✓ flex" || echo "✗ flex (MISSING)"
+	@command -v bison >/dev/null && echo "✓ bison" || echo "✗ bison (MISSING)"
+	@command -v $(CROSS_COMPILE)gcc >/dev/null && echo "✓ $(CROSS_COMPILE)gcc" || echo "✗ $(CROSS_COMPILE)gcc (MISSING)"
+	@echo ""
+	@echo "Optional tools:"
+	@command -v ccache >/dev/null && echo "✓ ccache (speed-up available)" || echo "  ccache not installed"
+	@command -v clang >/dev/null && echo "✓ clang (CLANG build available)" || echo "  clang not installed"
+
+# Quick build (for CI/CD)
+quick: clean config build
+	@echo "Quick build complete!"
+
+# Help for commonly used combinations
+examples:
+	@echo "Common build scenarios:"
+	@echo ""
+	@echo "1. Full build with modules:"
+	@echo "   $$ make -f Makefile.kernel all"
+	@echo ""
+	@echo "2. Clean and rebuild:"
+	@echo "   $$ make -f Makefile.kernel clean all"
+	@echo ""
+	@echo "3. Modify config and rebuild:"
+	@echo "   $$ make -f Makefile.kernel menuconfig build"
+	@echo ""
+	@echo "4. Just build kernel (no modules):"
+	@echo "   $$ make -f Makefile.kernel build"
+	@echo ""
+	@echo "5. Check build status:"
+	@echo "   $$ make -f Makefile.kernel status"
+	@echo ""
+	@echo "6. Full rebuild from defconfig:"
+	@echo "   $$ make -f Makefile.kernel mrproper all"
+
+# Quiet build (minimal output)
+quiet: config
+	@make O=$(OUT_DIR) ARCH=$(ARCH) -j$(JOBS) > /dev/null 2>&1
+	@echo "Build complete!"
+	@ls -lh $(OUT_DIR)/arch/$(ARCH)/boot/Image*
+
+.DEFAULT_GOAL := help
